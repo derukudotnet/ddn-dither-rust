@@ -18,7 +18,7 @@ struct LoadedImage {
 enum DragAction {
     Idle,
     Create { anchor: (f32, f32) },
-    Move { offset: (f32, f32) },
+    Move { grab_offset: (f32, f32) },
     Resize { handle: Handle },
 }
 
@@ -47,6 +47,8 @@ pub struct DitherApp {
     preview_key: Option<PreviewKey>,
     preview_full: Option<RgbImage>,
     action: DragAction,
+    last_img_rect: egui::Rect,
+    last_scale: f32,
 }
 
 const ASPECT_PRESETS: [(&str, Option<f64>); 6] = [
@@ -77,6 +79,8 @@ impl Default for DitherApp {
             preview_key: None,
             preview_full: None,
             action: DragAction::Idle,
+            last_img_rect: egui::Rect::NOTHING,
+            last_scale: 1.0,
         }
     }
 }
@@ -298,6 +302,8 @@ impl DitherApp {
 
         let (outer, response) = ui.allocate_exact_size(avail, Sense::click_and_drag());
         let img_rect = Rect::from_center_size(outer.center(), display_size);
+        self.last_img_rect = img_rect;
+        self.last_scale = scale;
 
         ui.painter().image(
             loaded.1.id(),
@@ -321,21 +327,23 @@ impl DitherApp {
         let tol = EDGE_TOLERANCE_PX / scale;
 
         let pointer = response.interact_pointer_pos();
+        let press_origin = ui.ctx().input(|i| i.pointer.press_origin());
         let bounds = (img_size.x, img_size.y);
+        let down_on_us = response.is_pointer_button_down_on();
 
-        if response.drag_started() {
-            if let Some(p) = pointer {
-                let (sx, sy) = source_px(img_rect, p);
+        if down_on_us
+            && (response.drag_started() || (response.dragged() && self.action == DragAction::Idle))
+        {
+            if let Some(press) = press_origin {
+                let (sx, sy) = source_px(img_rect, press);
                 let (sx, sy) = clamp_point(sx, sy);
-                let handle = self
-                    .crop
-                    .and_then(|c| c.hit_test(sx, sy, tol));
+                let handle = self.crop.and_then(|c| c.hit_test(sx, sy, tol));
                 self.action = match handle {
                     None => DragAction::Create { anchor: (sx, sy) },
                     Some(Handle::Inside) => {
                         let c = self.crop.unwrap();
                         DragAction::Move {
-                            offset: (sx - c.x0, sy - c.y0),
+                            grab_offset: (sx - c.x0, sy - c.y0),
                         }
                     }
                     Some(h) => DragAction::Resize { handle: h },
@@ -358,9 +366,10 @@ impl DitherApp {
                             bounds,
                         ));
                     }
-                    DragAction::Move { offset } => {
+                    DragAction::Move { grab_offset } => {
                         if let Some(c) = self.crop {
-                            self.crop = Some(c.moved(sx - offset.0, sy - offset.1, bounds));
+                            self.crop =
+                                Some(c.moved_to(sx - grab_offset.0, sy - grab_offset.1, bounds));
                         }
                     }
                     DragAction::Resize { handle } => {
@@ -420,6 +429,12 @@ impl DitherApp {
 
 impl eframe::App for DitherApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.ui(ctx);
+    }
+}
+
+impl DitherApp {
+    fn ui(&mut self, ctx: &egui::Context) {
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             let aspect = self.aspect;
             self.set_aspect(ctx, aspect);
@@ -443,7 +458,6 @@ impl eframe::App for DitherApp {
         });
 
         egui::SidePanel::right("controls")
-            .resizable(true)
             .default_width(380.0)
             .show(ctx, |ui| {
                 ui.add_space(6.0);
@@ -470,7 +484,9 @@ impl eframe::App for DitherApp {
                 ui.add_space(8.0);
             });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().inner_margin(8.0))
+            .show(ctx, |ui| {
             if self.image.is_none() {
                 ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
                     ui.add_space(80.0);
@@ -506,4 +522,140 @@ pub fn run() -> Result<(), eframe::Error> {
         options,
         Box::new(|_cc| Ok(Box::<DitherApp>::default())),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    struct Harness {
+        ctx: egui::Context,
+        app: DitherApp,
+    }
+
+    impl Harness {
+        fn new(img_w: u32, img_h: u32) -> Self {
+            let ctx = egui::Context::default();
+            ctx.set_pixels_per_point(1.0);
+            let mut img = RgbImage::new(img_w, img_h);
+            for (x, y, p) in img.enumerate_pixels_mut() {
+                *p = image::Rgb([(x % 256) as u8, (y % 256) as u8, 128]);
+            }
+            let dir = std::env::temp_dir().join("ddn_ui_test");
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join(format!("img_{img_w}x{img_h}.png"));
+            img.save(&path).unwrap();
+
+            let mut app = DitherApp::default();
+            app.load_image(&ctx, path);
+            let mut h = Harness { ctx, app };
+            h.frame(vec![]);
+            h
+        }
+
+        fn frame(&mut self, events: Vec<egui::Event>) {
+            let Harness { ctx, app } = self;
+            let raw = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(
+                    Pos2::ZERO,
+                    Vec2::new(1200.0, 800.0),
+                )),
+                events,
+                ..Default::default()
+            };
+            let _ = ctx.run(raw, |ctx| app.ui(ctx));
+        }
+
+        fn crop_screen_rect(&self) -> egui::Rect {
+            let c = self.app.crop.unwrap();
+            let r = self.app.last_img_rect;
+            let s = self.app.last_scale;
+            egui::Rect::from_min_max(
+                Pos2::new(r.min.x + c.x0 * s, r.min.y + c.y0 * s),
+                Pos2::new(r.min.x + c.x1 * s, r.min.y + c.y1 * s),
+            )
+        }
+    }
+
+    fn press(p: Pos2) -> egui::Event {
+        egui::Event::PointerButton {
+            pos: p,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: Default::default(),
+        }
+    }
+
+    fn release(p: Pos2) -> egui::Event {
+        egui::Event::PointerButton {
+            pos: p,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        }
+    }
+
+    #[test]
+    fn corner_resize_tracks_cursor_one_to_one_downscaled_image() {
+        let mut h = Harness::new(2000, 1500);
+        assert!(h.app.last_scale < 1.0, "test image must be downscaled");
+
+        h.app.crop = Some(CropRect::from_size(200.0, 200.0, 800.0, 700.0));
+        let before = h.crop_screen_rect();
+        let start = before.max - Vec2::new(1.0, 1.0);
+        h.frame(vec![press(start)]);
+        h.frame(vec![egui::Event::PointerMoved(start + Vec2::new(6.0, 4.0))]);
+        h.frame(vec![egui::Event::PointerMoved(start + Vec2::new(12.0, 8.0))]);
+
+        let after = h.crop_screen_rect();
+        assert_eq!(after.min, before.min, "anchor must stay fixed");
+        assert!(
+            (after.max.x - (start.x + 12.0)).abs() < 1.0,
+            "right edge at {:?}, cursor expected near {:?}",
+            after.max.x,
+            start.x + 12.0
+        );
+        assert!(
+            (after.max.y - (start.y + 8.0)).abs() < 1.0,
+            "bottom edge at {:?}, cursor expected near {:?}",
+            after.max.y,
+            start.y + 8.0
+        );
+        assert_eq!(after.min, before.min, "anchor must stay fixed");
+
+        h.frame(vec![release(start + Vec2::new(12.0, 8.0))]);
+    }
+
+    #[test]
+    fn move_drag_tracks_cursor_one_to_one() {
+        let mut h = Harness::new(800, 600);
+        h.app.crop = Some(CropRect::from_size(100.0, 100.0, 200.0, 150.0));
+        let r0 = h.crop_screen_rect();
+        let start = r0.center();
+        h.frame(vec![press(start)]);
+        h.frame(vec![egui::Event::PointerMoved(start + Vec2::new(6.0, 4.0))]);
+        h.frame(vec![egui::Event::PointerMoved(start + Vec2::new(20.0, 10.0))]);
+
+        let r1 = h.crop_screen_rect();
+        assert!((r1.min.x - (r0.min.x + 20.0)).abs() < 1.0, "moved by {:?}", r1.min - r0.min);
+        assert!((r1.min.y - (r0.min.y + 10.0)).abs() < 1.0);
+
+        h.frame(vec![release(start + Vec2::new(20.0, 10.0))]);
+    }
+
+    #[test]
+    fn create_rubber_band_tracks_cursor() {
+        let mut h = Harness::new(800, 600);
+        h.app.crop = None;
+        let start = h.app.last_img_rect.min + Vec2::new(50.0, 50.0);
+        h.frame(vec![press(start)]);
+        h.frame(vec![egui::Event::PointerMoved(start + Vec2::new(6.0, 6.0))]);
+        h.frame(vec![egui::Event::PointerMoved(start + Vec2::new(100.0, 80.0))]);
+
+        let r = h.crop_screen_rect();
+        assert!((r.min.x - start.x).abs() < 1.0);
+        assert!((r.max.x - (start.x + 100.0)).abs() < 1.0);
+        assert!((r.max.y - (start.y + 80.0)).abs() < 1.0);
+
+        h.frame(vec![release(start + Vec2::new(100.0, 80.0))]);
+    }
 }
