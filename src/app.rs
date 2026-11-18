@@ -4,9 +4,9 @@ use eframe::egui;
 use egui::{Color32, CursorIcon, Pos2, Rect, Sense, Stroke, TextureOptions, TextureFilter, Vec2};
 use image::RgbImage;
 
-use crate::config::{DEFAULT_INTERNAL_SCALE, DEFAULT_OUT_SCALE, EDGE_TOLERANCE_PX, PALETTES};
+use crate::config::{DEFAULT_INTERNAL_SCALE, DEFAULT_OUTPUT_WIDTH, EDGE_TOLERANCE_PX, PALETTES};
 use crate::crop::{CropRect, Handle};
-use crate::pipeline::{process, ProcessOptions};
+use crate::pipeline::{contain_size, process, OutScale, ProcessOptions};
 use crate::save::{default_output_path, save, OutputFormat};
 
 struct LoadedImage {
@@ -23,10 +23,16 @@ enum DragAction {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+enum OutMode {
+    Integer,
+    FixedWidth,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct PreviewKey {
     crop: Option<[u32; 4]>,
     internal_scale: u32,
-    out_scale: u32,
+    out_scale: OutScale,
     palette_index: usize,
 }
 
@@ -37,7 +43,9 @@ pub struct DitherApp {
     aspect_preset: usize,
     aspect_custom: String,
     internal_scale: u32,
-    out_scale: u32,
+    out_mode: OutMode,
+    out_integer: u32,
+    out_width: u32,
     palette_index: usize,
     format: OutputFormat,
     output_path: Option<PathBuf>,
@@ -69,7 +77,9 @@ impl Default for DitherApp {
             aspect_preset: 0,
             aspect_custom: String::new(),
             internal_scale: DEFAULT_INTERNAL_SCALE,
-            out_scale: DEFAULT_OUT_SCALE,
+            out_mode: OutMode::FixedWidth,
+            out_integer: 2,
+            out_width: DEFAULT_OUTPUT_WIDTH,
             palette_index: 0,
             format: OutputFormat::Png,
             output_path: None,
@@ -130,7 +140,7 @@ impl DitherApp {
 
         let opts = ProcessOptions {
             internal_scale: self.internal_scale,
-            out_scale: self.out_scale,
+            out_scale: self.out_scale(),
             palette_index: self.palette_index,
         };
         let out = process(&loaded.rgb, self.crop, opts);
@@ -160,9 +170,16 @@ impl DitherApp {
         Some(PreviewKey {
             crop: crop.map(|(x0, y0, x1, y1)| [x0, y0, x1, y1]),
             internal_scale: self.internal_scale,
-            out_scale: self.out_scale,
+            out_scale: self.out_scale(),
             palette_index: self.palette_index,
         })
+    }
+
+    fn out_scale(&self) -> OutScale {
+        match self.out_mode {
+            OutMode::Integer => OutScale::Integer(self.out_integer),
+            OutMode::FixedWidth => OutScale::Width(self.out_width),
+        }
     }
 
     fn options_panel(&mut self, ui: &mut egui::Ui) {
@@ -186,8 +203,29 @@ impl DitherApp {
         });
 
         ui.horizontal(|ui| {
-            ui.label("Output scale:");
-            ui.add(egui::Slider::new(&mut self.out_scale, 1..=8).text("x"));
+            ui.label("Output:");
+            let mode_text = match self.out_mode {
+                OutMode::Integer => "Scale \u{00d7}N",
+                OutMode::FixedWidth => "Fixed width",
+            };
+            egui::ComboBox::from_id_salt("out_mode")
+                .selected_text(mode_text)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.out_mode, OutMode::Integer, "Scale \u{00d7}N");
+                    ui.selectable_value(&mut self.out_mode, OutMode::FixedWidth, "Fixed width");
+                });
+            match self.out_mode {
+                OutMode::Integer => {
+                    ui.add(egui::Slider::new(&mut self.out_integer, 1..=8).text("\u{00d7}"));
+                }
+                OutMode::FixedWidth => {
+                    ui.add(
+                        egui::DragValue::new(&mut self.out_width)
+                            .range(64..=4096)
+                            .suffix(" px"),
+                    );
+                }
+            }
         });
 
         ui.separator();
@@ -467,14 +505,27 @@ impl DitherApp {
                         egui::Image::new(egui::load::SizedTexture::new(tex.id(), self.preview_size))
                             .max_width(ui.available_width()),
                     );
-                    let w_scale = self.preview_size.x / (128 * self.internal_scale.max(1)) as f32;
-                    let h_scale = self.preview_size.y / (112 * self.internal_scale.max(1)) as f32;
+                    let (cw, ch) = match (self.crop, self.image.as_ref()) {
+                        (Some(c), Some(loaded)) => {
+                            let (x0, y0, x1, y1) =
+                                c.pixel_bounds(loaded.rgb.width(), loaded.rgb.height());
+                            (x1 - x0, y1 - y0)
+                        }
+                        (_, Some(loaded)) => (loaded.rgb.width(), loaded.rgb.height()),
+                        _ => (0, 0),
+                    };
+                    let (work_w, _work_h) = contain_size(
+                        cw,
+                        ch,
+                        128 * self.internal_scale.max(1),
+                        112 * self.internal_scale.max(1),
+                    );
+                    let factor = self.preview_size.x / work_w as f32;
                     ui.label(format!(
-                        "Output: {} × {} (dither grid {:.1}×{})",
+                        "Output: {} × {} (×{:.2})",
                         self.preview_size.x as u32,
                         self.preview_size.y as u32,
-                        w_scale,
-                        h_scale
+                        factor
                     ));
                 } else {
                     ui.label("No preview yet.");

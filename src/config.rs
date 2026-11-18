@@ -1,7 +1,6 @@
 pub const PHOTO_WIDTH: u32 = 128;
 pub const PHOTO_HEIGHT: u32 = 112;
 pub const DEFAULT_INTERNAL_SCALE: u32 = 3;
-pub const DEFAULT_OUT_SCALE: u32 = 2;
 pub const DEFAULT_OUTPUT_WIDTH: u32 = 800;
 pub const EDGE_TOLERANCE_PX: f32 = 8.0;
 
