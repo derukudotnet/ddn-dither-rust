@@ -5,9 +5,9 @@ Bayer dithering. Single executable, GUI workflow, Linux.
 
 ## Features
 
-- **GUI workflow**: open an image, drag a crop selection (aspect-locked,
-  expands from the center like the original Tkinter tool), see a **live
-  dithered preview**, tweak options, save.
+- **GUI workflow**: open an image, draw a crop selection (aspect-locked
+  rubber-band with anchored resize), see a **live dithered preview**, tweak
+  options, save.
 - **Faithful pipeline** ported from the Python/original version:
   crop → fit within `128·s × 112·s` (Lanczos, downscale only) → Rec. 601
   luma → autocontrast with `cutoff (0, 10)` → 4×4 Bayer dithering at working
@@ -56,9 +56,9 @@ ddn-dither process photo.jpg -a 16:9 -s 3 -k 2 --palette gray -f png
 
 ## Controls (GUI)
 
-- **Drag** on empty area: create a selection (expands from the press point)
+- **Drag** on empty area: draw a new selection (rubber-band from the press point; aspect-locked when an aspect ratio is selected)
 - **Drag inside** the selection: move it
-- **Drag edges/corners**: resize (symmetrically around the center)
+- **Drag edges/corners**: resize (anchored at the opposite edge/corner; when an aspect ratio is selected, edge drags preserve it and corner drags stay locked to the ratio)
 - **Esc**: reset selection to full frame
 - Options panel: palette, dither scale (internal), output scale, aspect ratio
   (presets or custom `W:H`), output format
