@@ -17,9 +17,9 @@ struct LoadedImage {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum DragAction {
     Idle,
-    Create { center: (f32, f32) },
+    Create { anchor: (f32, f32) },
     Move { offset: (f32, f32) },
-    Resize,
+    Resize { handle: Handle },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -331,14 +331,14 @@ impl DitherApp {
                     .crop
                     .and_then(|c| c.hit_test(sx, sy, tol));
                 self.action = match handle {
-                    None => DragAction::Create { center: (sx, sy) },
+                    None => DragAction::Create { anchor: (sx, sy) },
                     Some(Handle::Inside) => {
                         let c = self.crop.unwrap();
                         DragAction::Move {
                             offset: (sx - c.x0, sy - c.y0),
                         }
                     }
-                    Some(_) => DragAction::Resize,
+                    Some(h) => DragAction::Resize { handle: h },
                 };
             }
         }
@@ -348,10 +348,10 @@ impl DitherApp {
                 let (sx, sy) = source_px(img_rect, p);
                 let (sx, sy) = clamp_point(sx, sy);
                 match self.action {
-                    DragAction::Create { center } => {
-                        self.crop = Some(CropRect::rect_from_center(
-                            center.0,
-                            center.1,
+                    DragAction::Create { anchor } => {
+                        self.crop = Some(CropRect::band(
+                            anchor.0,
+                            anchor.1,
                             sx,
                             sy,
                             self.aspect,
@@ -363,12 +363,9 @@ impl DitherApp {
                             self.crop = Some(c.moved(sx - offset.0, sy - offset.1, bounds));
                         }
                     }
-                    DragAction::Resize => {
+                    DragAction::Resize { handle } => {
                         if let Some(c) = self.crop {
-                            let (cx, cy) = c.center();
-                            self.crop = Some(CropRect::rect_from_center(
-                                cx, cy, sx, sy, self.aspect, bounds,
-                            ));
+                            self.crop = Some(c.drag_resize(handle, sx, sy, self.aspect, bounds));
                         }
                     }
                     DragAction::Idle => {}
@@ -438,7 +435,7 @@ impl eframe::App for DitherApp {
                 ui.separator();
                 ui.label(
                     egui::RichText::new(
-                        "Drag to create a selection · drag inside to move · drag edges to resize · Esc resets",
+                        "Drag to draw a selection · drag inside to move · drag edges/corners to resize · Esc resets",
                     )
                     .weak(),
                 );
