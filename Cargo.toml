@@ -1,0 +1,16 @@
+[package]
+name = "ddn-dither"
+version = "0.1.0"
+edition = "2021"
+description = "Game Boy Camera-style dithering tool with interactive crop"
+license = "MIT"
+
+[dependencies]
+eframe = "0.33"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
+png = "0.18"
+
+[profile.release]
+lto = true
+strip = true
