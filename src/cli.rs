@@ -202,8 +202,8 @@ Options:
   -s, --internal-scale <N>  Dither grid scale (default 3)
   -k, --out-scale <N>       Integer output upscale
   -w, --width <PX>          Fixed output width, non-integer resize (default 800)
-  -H, --height <PX>         Fixed output height (proportional width if -w omitted,
-                            exact size when combined with -w)
+  -H, --height <PX>         Output height; combined with -w the output fits inside
+                            W×H without distortion (alone: proportional width)
                             -k is mutually exclusive with -w/-H
   -a, --aspect <W:H|W/H|F>  Center-crop to aspect ratio
   --palette <NAME>          Gray | DMG | Pocket

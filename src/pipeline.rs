@@ -136,10 +136,14 @@ pub fn resize_output(img: &RgbImage, mode: OutScale) -> RgbImage {
         }
         OutScale::Size(width, height) => {
             let (width, height) = (width.max(1), height.max(1));
-            if img.width() == width && img.height() == height {
+            let factor = (width as f64 / img.width() as f64)
+                .min(height as f64 / img.height() as f64);
+            let new_w = ((img.width() as f64 * factor).round() as u32).max(1);
+            let new_h = ((img.height() as f64 * factor).round() as u32).max(1);
+            if img.width() == new_w && img.height() == new_h {
                 return img.clone();
             }
-            image::imageops::resize(img, width, height, FilterType::Nearest)
+            image::imageops::resize(img, new_w, new_h, FilterType::Nearest)
         }
     }
 }
@@ -261,14 +265,18 @@ mod tests {
     }
 
     #[test]
-    fn fixed_size_hits_exact_dimensions() {
+    fn fixed_size_fits_within_box_without_distortion() {
         let img = RgbImage::new(384, 288);
         let out = resize_output(&img, OutScale::Size(800, 600));
         assert_eq!(out.dimensions(), (800, 600));
 
         let img = RgbImage::new(1600, 900);
         let out = resize_output(&img, OutScale::Size(800, 600));
-        assert_eq!(out.dimensions(), (800, 600));
+        assert_eq!(out.dimensions(), (800, 450));
+
+        let img = RgbImage::new(400, 300);
+        let out = resize_output(&img, OutScale::Size(600, 200));
+        assert_eq!(out.dimensions(), (267, 200));
     }
 
     #[test]
@@ -325,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn process_fixed_size_distorted_stays_in_palette() {
+    fn process_fixed_size_fits_without_distortion_stays_in_palette() {
         let mut src = RgbImage::new(400, 300);
         for (x, y, p) in src.enumerate_pixels_mut() {
             let v = ((x + y) % 256) as u8;
@@ -340,7 +348,7 @@ mod tests {
                 palette_index: 0,
             },
         );
-        assert_eq!(out.dimensions(), (600, 200));
+        assert_eq!(out.dimensions(), (267, 200));
         for p in out.pixels() {
             assert!(
                 crate::config::PALETTES[0].colors.contains(&p.0),

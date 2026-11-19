@@ -211,14 +211,14 @@ impl DitherApp {
             let mode_text = match self.out_mode {
                 OutMode::Integer => "Scale \u{00d7}N",
                 OutMode::FixedWidth => "Fixed width",
-                OutMode::FixedSize => "Fixed W\u{00d7}H",
+                OutMode::FixedSize => "Fit W\u{00d7}H",
             };
             egui::ComboBox::from_id_salt("out_mode")
                 .selected_text(mode_text)
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut self.out_mode, OutMode::Integer, "Scale \u{00d7}N");
                     ui.selectable_value(&mut self.out_mode, OutMode::FixedWidth, "Fixed width");
-                    ui.selectable_value(&mut self.out_mode, OutMode::FixedSize, "Fixed W\u{00d7}H");
+                    ui.selectable_value(&mut self.out_mode, OutMode::FixedSize, "Fit W\u{00d7}H");
                 });
             match self.out_mode {
                 OutMode::Integer => {
@@ -242,7 +242,7 @@ impl DitherApp {
                     );
                     ui.label(
                         egui::RichText::new(
-                            "exact size \u{2014} aspect may distort if it differs from the selection",
+                            "no distortion \u{2014} the selection is fit inside W\u{00d7}H",
                         )
                         .weak(),
                     );
@@ -517,8 +517,17 @@ impl DitherApp {
             });
         });
 
-        egui::SidePanel::right("controls")
+        egui::TopBottomPanel::bottom("options")
+            .show(ctx, |ui| {
+                ui.add_space(6.0);
+                self.options_panel(ui);
+                ui.add_space(6.0);
+            });
+
+        egui::SidePanel::right("preview")
             .default_width(380.0)
+            .min_width(380.0)
+            .resizable(false)
             .show(ctx, |ui| {
                 ui.add_space(6.0);
                 ui.heading("Preview");
@@ -552,8 +561,6 @@ impl DitherApp {
                 } else {
                     ui.label("No preview yet.");
                 }
-                ui.add_space(8.0);
-                self.options_panel(ui);
                 ui.add_space(8.0);
             });
 
@@ -621,6 +628,7 @@ mod tests {
             let mut app = DitherApp::default();
             app.load_image(&ctx, path);
             let mut h = Harness { ctx, app };
+            h.frame(vec![]);
             h.frame(vec![]);
             h
         }
