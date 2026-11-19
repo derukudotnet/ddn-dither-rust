@@ -31,6 +31,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let mut internal_scale = crate::config::DEFAULT_INTERNAL_SCALE;
     let mut out_scale_arg: Option<u32> = None;
     let mut out_width_arg: Option<u32> = None;
+    let mut out_height_arg: Option<u32> = None;
     let mut aspect: Option<f64> = None;
     let mut palette_index = 0usize;
     let mut format = OutputFormat::Png;
@@ -57,6 +58,18 @@ pub fn run(args: &[String]) -> Result<(), String> {
                     return Err("--out-scale must be >= 1".into());
                 }
                 out_scale_arg = Some(v);
+            }
+            "-H" | "--height" => {
+                i += 1;
+                let v: u32 = args
+                    .get(i)
+                    .map(|s| s.parse().ok())
+                    .flatten()
+                    .unwrap_or(0);
+                if v < 1 {
+                    return Err("--height must be >= 1".into());
+                }
+                out_height_arg = Some(v);
             }
             "-w" | "--width" => {
                 i += 1;
@@ -119,13 +132,21 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let crop = aspect
         .map(|a| CropRect::full_frame((source.width() as f32, source.height() as f32), Some(a)));
 
-    let out_scale = match (out_scale_arg, out_width_arg) {
-        (Some(_), Some(_)) => {
-            return Err("--out-scale and --width are mutually exclusive".into());
+    if out_scale_arg.is_some() && (out_width_arg.is_some() || out_height_arg.is_some()) {
+        return Err("--out-scale and --width/--height are mutually exclusive".into());
+    }
+    let out_scale = match (out_width_arg, out_height_arg) {
+        (Some(w), Some(h)) => OutScale::Size(w, h),
+        (Some(w), None) => OutScale::Width(w),
+        (None, Some(h)) => {
+            let (work_w, work_h) = working_size(&source, crop, internal_scale);
+            let w = ((work_w as f64 * (h as f64 / work_h as f64)).round() as u32).max(1);
+            OutScale::Size(w, h)
         }
-        (Some(k), None) => OutScale::Integer(k),
-        (None, Some(w)) => OutScale::Width(w),
-        (None, None) => OutScale::default(),
+        (None, None) => match out_scale_arg {
+            Some(k) => OutScale::Integer(k),
+            None => OutScale::default(),
+        },
     };
 
     let opts = ProcessOptions {
@@ -171,20 +192,22 @@ fn working_size(source: &image::RgbImage, crop: Option<CropRect>, internal_scale
 
 fn print_help() {
     println!(
-        "ddn-dither - Game Boy Camera-style dithering\n\
-         \n\
-         Usage:\n\
-           ddn-dither                Open the interactive GUI.\n\
-           ddn-dither process <IMG> [options]\n\
-         \n\
-         Options:\n\
-           -s, --internal-scale <N>  Dither grid scale (default 3)\n\
-           -k, --out-scale <N>       Integer output upscale
-           -w, --width <PX>          Fixed output width, non-integer resize (default 800)
-                                     -k and -w are mutually exclusive\n\
-           -a, --aspect <W:H|W/H|F>  Center-crop to aspect ratio\n\
-           --palette <NAME>          Gray | DMG | Pocket\n\
-           -f, --format <png|webp>   Output format (default png)\n\
-           -o, --output <PATH>       Output file (default: <input>_dithered.<ext>)"
+"ddn-dither - Game Boy Camera-style dithering
+
+Usage:
+  ddn-dither                Open the interactive GUI.
+  ddn-dither process <IMG> [options]
+
+Options:
+  -s, --internal-scale <N>  Dither grid scale (default 3)
+  -k, --out-scale <N>       Integer output upscale
+  -w, --width <PX>          Fixed output width, non-integer resize (default 800)
+  -H, --height <PX>         Output height; combined with -w the output fits inside
+                            W×H without distortion (alone: proportional width)
+                            -k is mutually exclusive with -w/-H
+  -a, --aspect <W:H|W/H|F>  Center-crop to aspect ratio
+  --palette <NAME>          Gray | DMG | Pocket
+  -f, --format <png|webp>   Output format (default png)
+  -o, --output <PATH>       Output file (default: <input>_dithered.<ext>)"
     );
 }
