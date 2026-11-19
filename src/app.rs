@@ -26,6 +26,7 @@ enum DragAction {
 enum OutMode {
     Integer,
     FixedWidth,
+    FixedSize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -46,6 +47,7 @@ pub struct DitherApp {
     out_mode: OutMode,
     out_integer: u32,
     out_width: u32,
+    out_height: u32,
     palette_index: usize,
     format: OutputFormat,
     output_path: Option<PathBuf>,
@@ -80,6 +82,7 @@ impl Default for DitherApp {
             out_mode: OutMode::FixedWidth,
             out_integer: 2,
             out_width: DEFAULT_OUTPUT_WIDTH,
+            out_height: 600,
             palette_index: 0,
             format: OutputFormat::Png,
             output_path: None,
@@ -179,6 +182,7 @@ impl DitherApp {
         match self.out_mode {
             OutMode::Integer => OutScale::Integer(self.out_integer),
             OutMode::FixedWidth => OutScale::Width(self.out_width),
+            OutMode::FixedSize => OutScale::Size(self.out_width, self.out_height),
         }
     }
 
@@ -207,24 +211,42 @@ impl DitherApp {
             let mode_text = match self.out_mode {
                 OutMode::Integer => "Scale \u{00d7}N",
                 OutMode::FixedWidth => "Fixed width",
+                OutMode::FixedSize => "Fixed W\u{00d7}H",
             };
             egui::ComboBox::from_id_salt("out_mode")
                 .selected_text(mode_text)
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut self.out_mode, OutMode::Integer, "Scale \u{00d7}N");
                     ui.selectable_value(&mut self.out_mode, OutMode::FixedWidth, "Fixed width");
+                    ui.selectable_value(&mut self.out_mode, OutMode::FixedSize, "Fixed W\u{00d7}H");
                 });
             match self.out_mode {
                 OutMode::Integer => {
                     ui.add(egui::Slider::new(&mut self.out_integer, 1..=8).text("\u{00d7}"));
                 }
-                OutMode::FixedWidth => {
+                OutMode::FixedWidth | OutMode::FixedSize => {
                     ui.add(
                         egui::DragValue::new(&mut self.out_width)
-                            .range(64..=4096)
+                            .range(16..=4096)
                             .suffix(" px"),
                     );
                 }
+            }
+            if self.out_mode == OutMode::FixedSize {
+                ui.horizontal(|ui| {
+                    ui.label("Height:");
+                    ui.add(
+                        egui::DragValue::new(&mut self.out_height)
+                            .range(16..=4096)
+                            .suffix(" px"),
+                    );
+                    ui.label(
+                        egui::RichText::new(
+                            "exact size \u{2014} aspect may distort if it differs from the selection",
+                        )
+                        .weak(),
+                    );
+                });
             }
         });
 
