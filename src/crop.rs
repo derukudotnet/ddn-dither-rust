@@ -133,13 +133,13 @@ impl CropRect {
             .clamped(bounds.0, bounds.1)
     }
 
-    pub fn moved(&self, dx: f32, dy: f32, bounds: (f32, f32)) -> Self {
+    pub fn moved_to(&self, x: f32, y: f32, bounds: (f32, f32)) -> Self {
         let w = self.width();
         let h = self.height();
         let max_x0 = (bounds.0 - w).max(0.0);
         let max_y0 = (bounds.1 - h).max(0.0);
-        let nx0 = (self.x0 + dx).max(0.0).min(max_x0);
-        let ny0 = (self.y0 + dy).max(0.0).min(max_y0);
+        let nx0 = x.max(0.0).min(max_x0);
+        let ny0 = y.max(0.0).min(max_y0);
         CropRect::from_size(nx0, ny0, w, h)
     }
 
@@ -374,9 +374,19 @@ mod tests {
     #[test]
     fn move_clamps_within_bounds() {
         let r = CropRect::from_size(50.0, 50.0, 100.0, 50.0);
-        let m = r.moved(1000.0, 1000.0, (200.0, 200.0));
+        let m = r.moved_to(1000.0, 1000.0, (200.0, 200.0));
         assert_eq!(m.x1, 200.0);
         assert_eq!(m.y1, 200.0);
+    }
+
+    #[test]
+    fn moved_to_sets_absolute_position() {
+        let r = CropRect::from_size(50.0, 50.0, 100.0, 50.0);
+        let m = r.moved_to(10.0, 20.0, (400.0, 300.0));
+        assert_eq!(m.x0, 10.0);
+        assert_eq!(m.y0, 20.0);
+        assert_eq!(m.x1, 110.0);
+        assert_eq!(m.y1, 70.0);
     }
 
     #[test]

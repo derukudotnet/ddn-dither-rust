@@ -13,8 +13,11 @@ Bayer dithering. Single executable, GUI workflow, Linux.
   luma → autocontrast with `cutoff (0, 10)` → 4×4 Bayer dithering at working
   resolution (thresholds 64/128/192) → 4-tone palette → nearest-neighbor
   upscale.
-- **Integer upscaling**: output is always an integer nearest-neighbor scale of
-  the dithered working image, so dither cells stay crisp and uniform.
+- **Scaling modes**: default output is a fixed 800 px width (nearest-neighbor,
+  matching the Python version), or integer upscaling so dither cells stay
+  crisp and uniform. Non-integer widths use nearest-neighbor as well, so the
+  output never contains blended/diluted palette tones — cells may vary
+  between e.g. 2 and 3 px, which is the accepted trade-off.
 - **Palettes**: grayscale (faithful to the original), DMG green, GB Pocket.
 - **Output**: indexed PNG (4 colors) or lossless WebP.
 - **Headless mode**: the same binary can also batch-process from the CLI.
@@ -42,13 +45,14 @@ ddn-dither
 Headless batch mode:
 
 ```sh
-ddn-dither process photo.jpg -a 16:9 -s 3 -k 2 --palette gray -f png
+ddn-dither process photo.jpg -a 16:9 -s 3 -w 800 --palette gray -f png
 ```
 
 | Option | Description |
 |---|---|
 | `-s, --internal-scale <N>` | Dither grid scale (default 3) |
-| `-k, --out-scale <N>` | Integer output upscale factor (default: ~800 px width) |
+| `-w, --width <PX>` | Fixed output width, non-integer resize (default 800) |
+| `-k, --out-scale <N>` | Integer output upscale (mutually exclusive with `-w`) |
 | `-a, --aspect <W:H\|W/H\|F>` | Center-crop to an aspect ratio |
 | `--palette <NAME>` | `Gray`, `DMG`, or `Pocket` |
 | `-f, --format <png\|webp>` | Output format (default `png`) |
@@ -60,8 +64,10 @@ ddn-dither process photo.jpg -a 16:9 -s 3 -k 2 --palette gray -f png
 - **Drag inside** the selection: move it
 - **Drag edges/corners**: resize (anchored at the opposite edge/corner; when an aspect ratio is selected, edge drags preserve it and corner drags stay locked to the ratio)
 - **Esc**: reset selection to full frame
-- Options panel: palette, dither scale (internal), output scale, aspect ratio
-  (presets or custom `W:H`), output format
+- Options panel: palette, dither scale (internal), output mode (fixed width in
+  px, or integer scale ×N), aspect ratio (presets or custom `W:H`), output
+  format. The label under the preview shows the final dimensions and the
+  resulting scale factor.
 
 ## Tests
 

@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use image::open;
 
-use crate::config::{DEFAULT_OUTPUT_WIDTH, PALETTES};
+use crate::config::PALETTES;
 use crate::crop::CropRect;
-use crate::pipeline::{process, ProcessOptions};
+use crate::pipeline::{contain_size, process, OutScale, ProcessOptions};
 use crate::save::{default_output_path, save, OutputFormat};
 
 pub fn parse_aspect(s: &str) -> Result<f64, String> {
@@ -29,7 +29,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
 
     let mut input: Option<String> = None;
     let mut internal_scale = crate::config::DEFAULT_INTERNAL_SCALE;
-    let mut out_scale: u32 = 0;
+    let mut out_scale_arg: Option<u32> = None;
+    let mut out_width_arg: Option<u32> = None;
     let mut aspect: Option<f64> = None;
     let mut palette_index = 0usize;
     let mut format = OutputFormat::Png;
@@ -47,14 +48,27 @@ pub fn run(args: &[String]) -> Result<(), String> {
             }
             "-k" | "--out-scale" => {
                 i += 1;
-                out_scale = args
+                let v: u32 = args
                     .get(i)
                     .map(|s| s.parse().ok())
                     .flatten()
                     .unwrap_or(0);
-                if out_scale < 1 {
+                if v < 1 {
                     return Err("--out-scale must be >= 1".into());
                 }
+                out_scale_arg = Some(v);
+            }
+            "-w" | "--width" => {
+                i += 1;
+                let v: u32 = args
+                    .get(i)
+                    .map(|s| s.parse().ok())
+                    .flatten()
+                    .unwrap_or(0);
+                if v < 1 {
+                    return Err("--width must be >= 1".into());
+                }
+                out_width_arg = Some(v);
             }
             "-a" | "--aspect" => {
                 i += 1;
@@ -105,11 +119,13 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let crop = aspect
         .map(|a| CropRect::full_frame((source.width() as f32, source.height() as f32), Some(a)));
 
-    let out_scale = if out_scale >= 1 {
-        out_scale
-    } else {
-        let working_w = working_width(&source, crop, internal_scale);
-        ((DEFAULT_OUTPUT_WIDTH as f64 / working_w as f64).floor() as u32).max(1)
+    let out_scale = match (out_scale_arg, out_width_arg) {
+        (Some(_), Some(_)) => {
+            return Err("--out-scale and --width are mutually exclusive".into());
+        }
+        (Some(k), None) => OutScale::Integer(k),
+        (None, Some(w)) => OutScale::Width(w),
+        (None, None) => OutScale::default(),
     };
 
     let opts = ProcessOptions {
@@ -125,33 +141,32 @@ pub fn run(args: &[String]) -> Result<(), String> {
 
     save(&out_path, &out_img, &PALETTES[palette_index].colors, format)?;
 
+    let (work_w, work_h) = working_size(&source, crop, internal_scale);
     eprintln!(
         "Saved {} (working {}x{}, output {}x{})",
         out_path.display(),
-        out_img.width() / out_scale,
-        out_img.height() / out_scale,
+        work_w,
+        work_h,
         out_img.width(),
         out_img.height()
     );
     Ok(())
 }
 
-fn working_width(source: &image::RgbImage, crop: Option<CropRect>, internal_scale: u32) -> u32 {
+fn working_size(source: &image::RgbImage, crop: Option<CropRect>, internal_scale: u32) -> (u32, u32) {
     let (cw, ch) = match crop {
         Some(c) => {
             let (x0, y0, x1, y1) = c.pixel_bounds(source.width(), source.height());
-            ((x1 - x0) as u32, (y1 - y0) as u32)
+            (x1 - x0, y1 - y0)
         }
         None => (source.width(), source.height()),
     };
-    let max_w = crate::config::PHOTO_WIDTH * internal_scale;
-    let max_h = crate::config::PHOTO_HEIGHT * internal_scale;
-    if cw <= max_w && ch <= max_h {
-        cw
-    } else {
-        let ratio = (max_w as f64 / cw as f64).min(max_h as f64 / ch as f64);
-        ((cw as f64 * ratio).floor() as u32).max(1)
-    }
+    contain_size(
+        cw,
+        ch,
+        crate::config::PHOTO_WIDTH * internal_scale,
+        crate::config::PHOTO_HEIGHT * internal_scale,
+    )
 }
 
 fn print_help() {
@@ -164,7 +179,9 @@ fn print_help() {
          \n\
          Options:\n\
            -s, --internal-scale <N>  Dither grid scale (default 3)\n\
-           -k, --out-scale <N>       Integer output upscale (default: fit width ~800)\n\
+           -k, --out-scale <N>       Integer output upscale
+           -w, --width <PX>          Fixed output width, non-integer resize (default 800)
+                                     -k and -w are mutually exclusive\n\
            -a, --aspect <W:H|W/H|F>  Center-crop to aspect ratio\n\
            --palette <NAME>          Gray | DMG | Pocket\n\
            -f, --format <png|webp>   Output format (default png)\n\

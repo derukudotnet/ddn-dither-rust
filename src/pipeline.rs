@@ -6,9 +6,21 @@ use crate::crop::CropRect;
 use crate::dither::bayer_dither_4tone;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub enum OutScale {
+    Integer(u32),
+    Width(u32),
+}
+
+impl Default for OutScale {
+    fn default() -> Self {
+        OutScale::Width(crate::config::DEFAULT_OUTPUT_WIDTH)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ProcessOptions {
     pub internal_scale: u32,
-    pub out_scale: u32,
+    pub out_scale: OutScale,
     pub palette_index: usize,
 }
 
@@ -16,7 +28,7 @@ impl Default for ProcessOptions {
     fn default() -> Self {
         ProcessOptions {
             internal_scale: crate::config::DEFAULT_INTERNAL_SCALE,
-            out_scale: crate::config::DEFAULT_OUT_SCALE,
+            out_scale: OutScale::default(),
             palette_index: 0,
         }
     }
@@ -78,14 +90,22 @@ pub fn autocontrast(gray: &[u8], cutoff_lo_pct: f64, cutoff_hi_pct: f64) -> Vec<
         .collect()
 }
 
-pub fn contain_downscale(img: &RgbImage, max_w: u32, max_h: u32) -> RgbImage {
-    let (w, h) = (img.width(), img.height());
+pub fn contain_size(w: u32, h: u32, max_w: u32, max_h: u32) -> (u32, u32) {
     if w <= max_w && h <= max_h {
-        return img.clone();
+        return (w, h);
     }
     let ratio = (max_w as f64 / w as f64).min(max_h as f64 / h as f64);
-    let new_w = ((w as f64 * ratio).floor() as u32).max(1);
-    let new_h = ((h as f64 * ratio).floor() as u32).max(1);
+    (
+        ((w as f64 * ratio).floor() as u32).max(1),
+        ((h as f64 * ratio).floor() as u32).max(1),
+    )
+}
+
+pub fn contain_downscale(img: &RgbImage, max_w: u32, max_h: u32) -> RgbImage {
+    if img.width() <= max_w && img.height() <= max_h {
+        return img.clone();
+    }
+    let (new_w, new_h) = contain_size(img.width(), img.height(), max_w, max_h);
     image::imageops::resize(img, new_w, new_h, FilterType::Lanczos3)
 }
 
@@ -99,6 +119,21 @@ pub fn integer_upscale(img: &RgbImage, factor: u32) -> RgbImage {
         img.height() * factor,
         FilterType::Nearest,
     )
+}
+
+pub fn resize_output(img: &RgbImage, mode: OutScale) -> RgbImage {
+    match mode {
+        OutScale::Integer(factor) => integer_upscale(img, factor.max(1)),
+        OutScale::Width(width) => {
+            let width = width.max(1);
+            if img.width() == width {
+                return img.clone();
+            }
+            let factor = width as f64 / img.width() as f64;
+            let new_h = ((img.height() as f64 * factor).round() as u32).max(1);
+            image::imageops::resize(img, width, new_h, FilterType::Nearest)
+        }
+    }
 }
 
 pub fn process(
@@ -134,7 +169,7 @@ pub fn process(
         palette_img.put_pixel(x, y, Rgb(palette_colors[level.min(3) as usize]));
     }
 
-    integer_upscale(&palette_img, opts.out_scale.max(1))
+    resize_output(&palette_img, opts.out_scale)
 }
 
 #[cfg(test)]
@@ -193,6 +228,31 @@ mod tests {
     }
 
     #[test]
+    fn fixed_width_hits_exact_width_and_rounds_height() {
+        let img = RgbImage::new(384, 336);
+        let out = resize_output(&img, OutScale::Width(800));
+        assert_eq!(out.dimensions(), (800, 700));
+
+        let img = RgbImage::new(100, 75);
+        let out = resize_output(&img, OutScale::Width(800));
+        assert_eq!(out.dimensions(), (800, 600));
+
+        let img = RgbImage::new(300, 200);
+        let out = resize_output(&img, OutScale::Width(800));
+        assert_eq!(out.width(), 800);
+        assert_eq!(out.height(), 533);
+    }
+
+    #[test]
+    fn fixed_width_can_downscale() {
+        let img = RgbImage::new(1600, 900);
+        let out = resize_output(&img, OutScale::Width(800));
+        assert_eq!(out.dimensions(), (800, 450));
+        let out = resize_output(&img, OutScale::Width(1600));
+        assert_eq!(out.dimensions(), (1600, 900));
+    }
+
+    #[test]
     fn process_output_stays_in_palette() {
         let mut src = RgbImage::new(400, 300);
         for (x, y, p) in src.enumerate_pixels_mut() {
@@ -204,12 +264,60 @@ mod tests {
             None,
             ProcessOptions {
                 internal_scale: 3,
-                out_scale: 2,
+                out_scale: OutScale::Integer(2),
                 palette_index: 0,
             },
         );
         assert_eq!(out.width(), 384 * 2);
         assert_eq!(out.height(), 288 * 2);
+        for p in out.pixels() {
+            assert!(
+                crate::config::PALETTES[0].colors.contains(&p.0),
+                "unexpected color {:?}",
+                p.0
+            );
+        }
+    }
+
+    #[test]
+    fn process_fixed_width_800_stays_in_palette() {
+        let mut src = RgbImage::new(400, 300);
+        for (x, y, p) in src.enumerate_pixels_mut() {
+            let v = ((x + y) % 256) as u8;
+            *p = Rgb([v, v, v]);
+        }
+        let out = process(
+            &src,
+            None,
+            ProcessOptions {
+                internal_scale: 3,
+                out_scale: OutScale::Width(800),
+                palette_index: 0,
+            },
+        );
+        assert_eq!(out.width(), 800);
+        for p in out.pixels() {
+            assert!(
+                crate::config::PALETTES[0].colors.contains(&p.0),
+                "unexpected color {:?}",
+                p.0
+            );
+        }
+    }
+
+    #[test]
+    fn process_fixed_width_downscale_stays_in_palette() {
+        let src = RgbImage::new(4000, 3000);
+        let out = process(
+            &src,
+            None,
+            ProcessOptions {
+                internal_scale: 3,
+                out_scale: OutScale::Width(200),
+                palette_index: 0,
+            },
+        );
+        assert_eq!(out.width(), 200);
         for p in out.pixels() {
             assert!(
                 crate::config::PALETTES[0].colors.contains(&p.0),
